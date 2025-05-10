@@ -1,9 +1,12 @@
 [project]
 name = "spell-correction"
 version = "0.1.0"
-description = "Add your description here"
+description = "Transform based neural network spell correction model for Uyghur language."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "ipykernel>=6.29.5",
+    "numpy>=2.2.5",
+    "tokenizers>=0.21.1",
     "torch>=2.7.0",
 ]

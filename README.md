@@ -16,6 +16,7 @@ here are some use case of this language model but not limited:
 - Standlone spell correction applications.
 - Dataset pre-processing tasks for other language modeling. e.g. Large language models. machine translation models even TTS Models.
 - Search (web search or database search). we cannot search something in our database unless the key of data we want to search is match 1:1
+- Content management system.
 
 # Who can use this language model?
 
@@ -38,3 +39,10 @@ we used the standard Encoder/Decoder transformer architecture from pytorch machi
 - [TODO] Publish our pre-trained model on HuggingFace.
 - [TODO] make instructions to Train/Fine-tune on custom dataset or train from scratch.
 - [TODO] Provide ONNX exported model file.
+- [TODO] Standlone spell checking desktop/web app uses vulkan/metal/cuda/cpu/webGPU backends provided from ONNX runtime.
+
+
+# How to use?
+
+1. install `uv` python package manager by running `pip install uv`
+2. install project dependencies by using uv command: `uv sync`
