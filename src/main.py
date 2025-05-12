@@ -10,6 +10,7 @@ import torch
 from arch.model import SpellCorrectorNet, LayerConfig
 from tokenizers import Tokenizer
 from pathlib import Path
+from helper.sentence_destructor import destruct_sentence
 
 device = "cuda:0"
 
@@ -23,5 +24,5 @@ model = SpellCorrectorNet(
 
 torch.save(model.state_dict(), str(Path(__file__).parent.parent / "checkpoints/model.pth"))
 
-import time
-time.sleep(1000)
+
+
