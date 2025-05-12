@@ -45,9 +45,8 @@ def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
     input_buffer = torch.zeros((batch_size, dataset.max_broken_sentence_length), device=device, dtype=torch.int32)
-
     original_sentences_buffer = torch.zeros((len(dataset.correct_sentences), dataset.max_correct_sentence_length), device=device, dtype=torch.int32)
-    target_buffer = torch.zeros((batch_size, dataset.max_correct_sentence_length, 1), device=device, dtype=torch.int32)
+    decoder_input_buffer = torch.zeros((batch_size, dataset.max_correct_sentence_length), device=device, dtype=torch.int32)
     copy_unpadded_tokens_into_buffer(dataset.correct_sentences, original_sentences_buffer)
 
     for e in range(epoch):
@@ -56,8 +55,14 @@ def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch
             copy_padded_tokens_into_buffer(list(map(lambda i: i[0], x)), input_buffer)
             generator = RegressiveBufferGenerator(original_sentence_buffer=original_sentences_buffer, lengths=list(map(lambda a: len(a), dataset.correct_sentences)))
 
-            import time
-            time.sleep(1)
+            max_sentence_length_in_current_batch = 0
+            index_map = {i: dataset.correct_sentences[i] for _, i in x}
+            for item in index_map.values():
+                max_sentence_length_in_current_batch = max(max_sentence_length_in_current_batch, len(item))
+            
+            for i in range((generator.item_count / batch_size.__ceil__())):
+                copied = generator.generate(decoder_input_buffer, batch_size)
+
             
 
 
@@ -85,5 +90,4 @@ def main():
 
 
 main()
-
 
