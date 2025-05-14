@@ -62,9 +62,9 @@ def copy_padded_tokens_into_buffer(tokens: list[list[int]], buffer: Tensor):
     if len(tokens) == 0: return
     buffer[:len(tokens), :len(tokens[0])] = torch.tensor(tokens, dtype=buffer.dtype, device=buffer.device)
 
-def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch = 20, batch_size = 64):
+def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch = 20, batch_size = 64, learning_rate=0.0005):
     scaler = torch.GradScaler(device=device)
-    optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
     encoder_input_buffer = torch.zeros((batch_size, dataset.max_broken_sentence_length), device=device, dtype=torch.int32)
@@ -74,13 +74,23 @@ def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch
     my_dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda batches: my_collate_fn(dataset, batches, encoder_input_buffer, decoder_input_buffer, decoder_output_target_buffer=target_buffer))
     
     for e in range(epoch):
-        for batch_index, item in tqdm(enumerate(my_dataloader), desc=f"{e}th epoch...", total=len(my_dataloader)):
+        progressbar = tqdm(enumerate(my_dataloader), desc=f"{e}th epoch...", total=len(my_dataloader))
+        for batch_index, item in progressbar:
             item: tuple[Tensor, Tensor, Tensor]
             encoder_input, decoder_input, decoder_output_target = item
 
-            memory = model.generate_memory(x=encoder_input)
-            output: Tensor = model(x=decoder_input, memory=memory)
+            optimizer.zero_grad()
+            with torch.autocast(device_type=device, dtype=torch.float16):
+                memory = model.generate_memory(x=encoder_input)
+                output: Tensor = model(x=decoder_input, memory=memory)
+                output = output.reshape(-1, output.shape[2])
+                target = decoder_output_target.reshape(-1).to(dtype=torch.int64)
+                loss: Tensor = criterion(output, target)
             
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            progressbar.set_description(f"loss: {str(loss.item())[:8]}")
 
         torch.save(model.state_dict(), str(Path(__file__).parent.parent / "checkpoints/model.pth"))
     
