@@ -60,7 +60,8 @@ class SpellCorrectorNet(Module):
         super().__init__()
 
         #common for encoder and decoder.
-        self.position_encoder = positional_encoding.PositionalEncoding(d_model=encoder_config["d_model"])
+        self.encoder_position_encoder = positional_encoding.PositionalEncoding(d_model=encoder_config["d_model"])
+        self.decoder_position_encoder = positional_encoding.PositionalEncoding(d_model=decoder_config["d_model"])
         #Encoders part.
         self.encoder_embedding = Embedding(num_embeddings=encoder_config["vocab_size"], embedding_dim=encoder_config["d_model"])
         self.encoder_layer = TransformerEncoderLayer(d_model=encoder_config["d_model"], nhead=encoder_config["n_head"], dropout=0.1, activation="gelu", batch_first=True)
@@ -84,7 +85,7 @@ class SpellCorrectorNet(Module):
         #shape of x gonna be [batch_size, sequence_length]
         x = self.encoder_embedding(x)
         #shape of x gonna be [batch_size, sequence_length, encoder_d_model]
-        x = self.position_encoder(x)
+        x = self.encoder_position_encoder(x)
         encoder_mask = torch.zeros((x.shape[1], x.shape[1]), device=x.device).bool()
         x = self.encoder(src=x, mask=encoder_mask, src_key_padding_mask=encoder_key_padding_mask)
         #now x becomes memory of decoder.
@@ -98,7 +99,7 @@ class SpellCorrectorNet(Module):
         #shape of x gonna be [batch_size, sequence_length]
         x = self.decoder_embedding(x)
         #shape of x gonna be [batch_size, sequence_length, decoder_d_model]
-        x = self.position_encoder(x)
+        x = self.decoder_position_encoder(x)
         target_causal_mask = torch.triu(torch.ones((x.shape[1], x.shape[1]), device=x.device), diagonal=1).bool()
         memory_causal_mask = torch.zeros(x.shape[1], memory.shape[1], device=x.device)
         memory_key_padding_mask = torch.zeros(memory.shape[0], memory.shape[1], device=x.device)
@@ -110,13 +111,17 @@ class SpellCorrectorNet(Module):
         #shape of x gonna be [batch_size, sequence_length, decoder_vocab_size]
         return x
     
-    def generate(self, text: str, input_tokenizer: Tokenizer, output_tokenizer: Tokenizer, device="cuda:0", max_length: int | None = None) -> str:
+    def generate_text(self, text: str, input_tokenizer: Tokenizer, output_tokenizer: Tokenizer, device="cuda:0", max_length: int | None = None) -> str:
+        if len(text) == 0:
+            return ""
+        self.eval()
         if max_length == None:
             max_length = len(text) * 2
         token_ids: list[int] = input_tokenizer.encode(f"<SOS>{text}<EOS>").ids
         x = torch.tensor(token_ids, dtype=torch.int32, device=device).reshape(1, -1)
-        with torch.autocast(device, dtype=torch.float16):
-            memory = self.generate_memory(x)
+        with torch.no_grad():
+            with torch.autocast(device, dtype=torch.float16):
+                memory = self.generate_memory(x)
         sos_token, eos_token = input_tokenizer.encode("<SOS><EOS>").ids
         eos_token: int
         sos_token: int
@@ -126,11 +131,12 @@ class SpellCorrectorNet(Module):
         buffer[-1][position] = sos_token
         position += 1
         while True:
-            with torch.autocast(device, dtype=torch.float16):
-                y: Tensor = self(buffer[:, :position], memory)
+            with torch.no_grad():
+                with torch.autocast(device, dtype=torch.float16):
+                    y: Tensor = self(buffer[:, :position], memory)
             next_token: int = torch.argmax(y[-1, -1]).item()
             if next_token == eos_token:
-                print("hit of <EOS>")
+                # print("hit of <EOS>")
                 break
             if position == max_length:
                 break

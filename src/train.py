@@ -7,66 +7,47 @@
 #*/
 from tokenizers import Tokenizer, Encoding, decoders
 from pathlib import Path
-from helper.dataset import SentenceDataset, DatasetItemIndex
+from helper.dataset import SentenceDataset, DatasetItemIndex, my_collate_fn
 import torch
 from torch import Tensor
 from arch.model import SpellCorrectorNet, LayerConfig
 from torch.utils.data import DataLoader
 from functools import reduce
 from tqdm import tqdm
+from typing import Callable, Any
+from torch.utils.tensorboard import SummaryWriter
 
-def my_collate_fn(dataset: SentenceDataset, items: list[DatasetItemIndex], encoder_input_buffer: Tensor, decoder_input_buffer: Tensor, decoder_output_target_buffer: Tensor):
-    encoder_input_buffer[:, :] = 0
-    decoder_input_buffer[:, :] = 0
-    decoder_output_target_buffer[:, :] = 0
-    items_of_pair = [dataset.get_dataset_item(x) for x in items]
+def save_checkpoint(model: SpellCorrectorNet, optimizer: torch.optim.Adam, grad_scaler: torch.GradScaler, epoch: int, file_name = "checkpoint.pth"):
+    dir = Path(__file__).parent.parent / "checkpoints"
+    path = dir / file_name
+    torch.save({
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "grad_scaler": grad_scaler.state_dict(),
+        "epoch": epoch,
+    }, path)
+    torch.save(model.state_dict(), dir / "model.pth")
 
-    # Determine max lengths
-    max_encoder_input = max(len(enc) for enc, _ in items_of_pair)
-    max_decoder_input = max(len(dec) for _, (dec, _) in items_of_pair)
-    
-    encoder_input_tokens, decoder_input_tokens, decoder_output_target_tokens = [], [], []
-    encoder_input_tokens: list[list[int]]
-    decoder_input_tokens: list[list[int]]
-    decoder_output_target_tokens: list[list[int]]
+def load_checkpoint(model: SpellCorrectorNet, optimizer: torch.optim.Adam, grad_scaler: torch.GradScaler, set_epoch: Callable[[int], None] | None = None, file_name = "checkpoint.pth") -> dict[str, Any]:
+    path = Path(__file__).parent.parent / f"checkpoints/{file_name}"
+    if not path.exists():
+        return {
+            "epoch": 0
+        }
+    checkpoint: dict = torch.load(path)
+    model.load_state_dict(checkpoint["model"])
+    optimizer.load_state_dict(checkpoint["optimizer"])
+    grad_scaler.load_state_dict(checkpoint["grad_scaler"])
+    if set_epoch is not None: set_epoch(checkpoint["epoch"])
+    return checkpoint
 
-    for _encoder_input_token, (_decoder_input_token, next_token) in items_of_pair:
-        #make a shallow copy of list to avoid affect original list.
-        encoder_input_token = _encoder_input_token[:]
-        decoder_input_token = _decoder_input_token[:]
-        decoder_target_token = decoder_input_token[1:]
-        decoder_target_token.append(next_token)
-        #padding
-        encoder_input_token.extend([0 for _ in range(max_encoder_input - len(encoder_input_token))])
-        decoder_input_token.extend([0 for _ in range(max_decoder_input - len(decoder_input_token))])
-        decoder_target_token.extend([0 for _ in range(max_decoder_input - len(decoder_target_token))])
-
-        encoder_input_tokens.append(encoder_input_token)
-        decoder_input_tokens.append(decoder_input_token)
-        decoder_output_target_tokens.append(decoder_target_token)
-    
-    copy_padded_tokens_into_buffer(encoder_input_tokens, encoder_input_buffer)
-    copy_padded_tokens_into_buffer(decoder_input_tokens, decoder_input_buffer)
-    copy_padded_tokens_into_buffer(decoder_output_target_tokens, decoder_output_target_buffer)
-
-    a, b, c = encoder_input_buffer[:, :max_encoder_input], decoder_input_buffer[:, :max_decoder_input], decoder_output_target_buffer[:, :max_decoder_input]
-    return a, b, c
-
-def copy_unpadded_tokens_into_buffer(tokens: list[list[int]], buffer: Tensor):
-    if len(tokens) == 0: return
-    for i, row in enumerate(tokens):
-        length = len(row)
-        buffer[i, :length] = torch.tensor(row, dtype=buffer.dtype, device=buffer.device)
-
-def copy_padded_tokens_into_buffer(tokens: list[list[int]], buffer: Tensor):
-    if len(tokens) == 0: return
-    buffer[:len(tokens), :len(tokens[0])] = torch.tensor(tokens, dtype=buffer.dtype, device=buffer.device)
-
-def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch = 20, batch_size = 64, learning_rate=0.0002):
+def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, logger: SummaryWriter, n_epoch = 20, batch_size = 64, learning_rate=0.00005):
     model.train()
     scaler = torch.GradScaler(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
+
+    checkpoint = load_checkpoint(model, optimizer, scaler, None)
 
     encoder_input_buffer = torch.zeros((batch_size, dataset.max_broken_sentence_length), device=device, dtype=torch.int32)
     decoder_input_buffer = torch.zeros((batch_size, dataset.max_correct_sentence_length), device=device, dtype=torch.int32)
@@ -74,8 +55,9 @@ def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch
 
     my_dataloader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, collate_fn=lambda batches: my_collate_fn(dataset, batches, encoder_input_buffer, decoder_input_buffer, decoder_output_target_buffer=target_buffer))
     
-    for e in range(epoch):
-        progressbar = tqdm(enumerate(my_dataloader), desc=f"{e}th epoch...", total=len(my_dataloader))
+    counter = 0
+    for e in range(checkpoint["epoch"], n_epoch):
+        progressbar = tqdm(enumerate(my_dataloader), total=len(my_dataloader))
         for batch_index, item in progressbar:
             item: tuple[Tensor, Tensor, Tensor]
             encoder_input, decoder_input, decoder_output_target = item
@@ -84,17 +66,21 @@ def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch
             with torch.autocast(device_type=device, dtype=torch.float16):
                 memory = model.generate_memory(x=encoder_input)
                 output: Tensor = model(x=decoder_input, memory=memory)
-                output = output.reshape(-1, output.shape[2])
-                target = decoder_output_target.reshape(-1).to(dtype=torch.int64)
-                loss: Tensor = criterion(output, target)
+            output = output.reshape(-1, output.shape[2])
+            target = decoder_output_target.reshape(-1).to(dtype=torch.int64)
+            loss: Tensor = criterion(output, target)
             
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            progressbar.set_description(f"loss: {str(loss.item())[:8]}")
 
-        torch.save(model.state_dict(), str(Path(__file__).parent.parent / "checkpoints/model.pth"))
-    
+            progressbar.set_description(f"epoch: {e}, loss: {str(loss.item())[:8]}")
+            logger.add_scalar("loss", loss.item(), counter, new_style=True)
+
+            if batch_index % 100 == 0:
+                save_checkpoint(model, optimizer, scaler, e)
+            counter += 1
+        save_checkpoint(model, optimizer, scaler, e)
 
 device = "cuda:0"
 
@@ -103,21 +89,22 @@ output_tokenizer: Tokenizer = Tokenizer.from_file(str(Path(__file__).parent.pare
 output_tokenizer.decoder = decoders.Metaspace()
 
 model = SpellCorrectorNet(
-    encoder_config=LayerConfig(vocab_size=input_tokenizer.get_vocab_size(), d_model=128, n_layer=8, n_head=4),
+    encoder_config=LayerConfig(vocab_size=input_tokenizer.get_vocab_size(), d_model=256, n_layer=12, n_head=4),
     decoder_config=LayerConfig(vocab_size=output_tokenizer.get_vocab_size(), d_model=128, n_layer=8, n_head=4),
 ).to(device)
 
 torch.save(model.state_dict(), str(Path(__file__).parent.parent / "checkpoints/model.pth"))
 
 def main():
-    
     data_dir = Path(__file__).parent.parent / ".data" / "text"
-    files = ["0.json"]
+    files = [f"{i * 1000}.json" for i in range(20)]
+    logger = SummaryWriter(".logs")
+
     for f in files:
         dataset_file = (data_dir / f).as_posix()
-        my_dataset = SentenceDataset(dataset_file, input_tokenizer, output_tokenizer, broken_sentence_variation_count=20)
-        print(f"Length of dataset: {len(my_dataset)}")
-        train(model=model, device=device, dataset=my_dataset, epoch=20, batch_size=240)
+        my_dataset = SentenceDataset(dataset_file, input_tokenizer, output_tokenizer, broken_sentence_variation_count=40)
+        print(f"Length of dataset: {len(my_dataset)} in file: {f}")
+        train(model=model, device=device, dataset=my_dataset, logger=logger, n_epoch=1, batch_size=200)
 
 main()
 

@@ -19,7 +19,7 @@ output_tokenizer: Tokenizer = Tokenizer.from_file(str(Path(__file__).parent.pare
 output_tokenizer.decoder = decoders.Metaspace()
 
 model = SpellCorrectorNet(
-    encoder_config=LayerConfig(vocab_size=input_tokenizer.get_vocab_size(), d_model=128, n_layer=8, n_head=4),
+    encoder_config=LayerConfig(vocab_size=input_tokenizer.get_vocab_size(), d_model=256, n_layer=12, n_head=4),
     decoder_config=LayerConfig(vocab_size=output_tokenizer.get_vocab_size(), d_model=128, n_layer=8, n_head=4),
 ).to(device)
 
@@ -28,6 +28,6 @@ model.load_state_dict(torch.load("checkpoints/model.pth"))
 
 while True:
     text = input("/>")
-    generated = model.generate(text, input_tokenizer, output_tokenizer, device)
+    generated = model.generate_text(text, input_tokenizer, output_tokenizer, device)
     # generated = model.generate("تەرخەمە", input_tokenizer, output_tokenizer, device)
     print(generated)
