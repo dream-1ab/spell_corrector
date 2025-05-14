@@ -23,7 +23,7 @@ class LayerConfig(TypedDict):
 class LinearTransformer(Module):
     def __init__(self, encoder_d_model: int, decoder_d_model: int):
         super().__init__()
-        self.activation = GLU()
+        self.activation = ReLU()
         self.layer0 = Linear(encoder_d_model, out_features=encoder_d_model)
         self.layer1 = Linear(encoder_d_model, out_features=decoder_d_model)
         self.layer2 = Linear(decoder_d_model, out_features=decoder_d_model)
@@ -41,7 +41,7 @@ class LinearTransformer(Module):
 class TokenClassification(Module):
     def __init__(self, decoder_d_model: int, vocab_size: int):
         super().__init__()
-        self.activation = GLU()
+        self.activation = ReLU()
         self.layer1 = Linear(in_features=decoder_d_model, out_features=decoder_d_model)
         self.layer2 = Linear(in_features=decoder_d_model, out_features=vocab_size)
 
@@ -99,7 +99,7 @@ class SpellCorrectorNet(Module):
         #shape of x gonna be [batch_size, sequence_length, decoder_d_model]
         x = self.position_encoder(x)
         target_causal_mask = torch.triu(torch.ones((x.shape[1], x.shape[1]), device=x.device), diagonal=1).bool()
-        memory_causal_mask = torch.zeros(x.shape[1], x.shape[1], device=x.device)
+        memory_causal_mask = torch.zeros(x.shape[1], memory.shape[1], device=x.device)
         memory_key_padding_mask = torch.zeros(memory.shape[0], memory.shape[1], device=x.device)
         x = self.decoder(tgt=x, memory=memory, tgt_mask=target_causal_mask, memory_mask=memory_causal_mask, tgt_key_padding_mask=target_key_padding_mask, memory_key_padding_mask=memory_key_padding_mask)
         #shape of x gonna be [batch_size, sequence_length, decoder_d_model]
