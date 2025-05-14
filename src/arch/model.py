@@ -13,6 +13,7 @@ import arch.positional_encoding as positional_encoding
 from typing import TypedDict
 from torch import Tensor, tensor
 import torch
+from tokenizers import Tokenizer
 
 class LayerConfig(TypedDict):
     vocab_size: int
@@ -108,5 +109,34 @@ class SpellCorrectorNet(Module):
         x = self.decoder_token_classification(x)
         #shape of x gonna be [batch_size, sequence_length, decoder_vocab_size]
         return x
+    
+    def generate(self, text: str, input_tokenizer: Tokenizer, output_tokenizer: Tokenizer, device="cuda:0", max_length: int | None = None) -> str:
+        if max_length == None:
+            max_length = len(text) * 2
+        token_ids: list[int] = input_tokenizer.encode(f"<SOS>{text}<EOS>").ids
+        x = torch.tensor(token_ids, dtype=torch.int32, device=device).reshape(1, -1)
+        with torch.autocast(device, dtype=torch.float16):
+            memory = self.generate_memory(x)
+        sos_token, eos_token = input_tokenizer.encode("<SOS><EOS>").ids
+        eos_token: int
+        sos_token: int
 
+        buffer = torch.zeros(1, max_length, dtype=torch.int32, device=device)
+        position = 0
+        buffer[-1][position] = sos_token
+        position += 1
+        while True:
+            with torch.autocast(device, dtype=torch.float16):
+                y: Tensor = self(buffer[:, :position], memory)
+            next_token: int = torch.argmax(y[-1, -1]).item()
+            if next_token == eos_token:
+                print("hit of <EOS>")
+                break
+            if position == max_length:
+                break
+            buffer[-1, position] = next_token
+            position += 1
+        output_token_ids = buffer[-1, :position].tolist()
+        text: str = output_tokenizer.decode(output_token_ids)
+        return text
 

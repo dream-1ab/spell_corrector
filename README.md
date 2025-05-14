@@ -13,6 +13,7 @@ we train this model with text corpus scraped from the internet and provide pre-t
 here are some use case of this language model but not limited:
 - Keyboard/Input method app. correct user typings.
 - ASR (Automatic speech recognition). ASR models may perform much much worse without spell correction.
+- OCR (Optical character recognition) without spell correction OCR systems may produce poor result especially hand written text recognition. B vs 8? I vs 1? l vs I? 2 vs Z? this model can help you correct the text by sentence overral context. 
 - Standlone spell correction applications.
 - Dataset pre-processing tasks for other language modeling. e.g. Large language models. machine translation models even TTS Models.
 - Search (web search or database search). we cannot search something in our database unless the key of data we want to search is match 1:1

@@ -5,7 +5,7 @@
 # * @modify date 2025-05-12 03:34:21
 # * @desc [description]
 #*/
-from tokenizers import Tokenizer, Encoding
+from tokenizers import Tokenizer, Encoding, decoders
 from pathlib import Path
 from helper.dataset import SentenceDataset, DatasetItemIndex
 import torch
@@ -62,7 +62,8 @@ def copy_padded_tokens_into_buffer(tokens: list[list[int]], buffer: Tensor):
     if len(tokens) == 0: return
     buffer[:len(tokens), :len(tokens[0])] = torch.tensor(tokens, dtype=buffer.dtype, device=buffer.device)
 
-def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch = 20, batch_size = 64, learning_rate=0.0005):
+def train(model: SpellCorrectorNet, device: str, dataset: SentenceDataset, epoch = 20, batch_size = 64, learning_rate=0.0002):
+    model.train()
     scaler = torch.GradScaler(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
@@ -99,6 +100,7 @@ device = "cuda:0"
 
 input_tokenizer: Tokenizer = Tokenizer.from_file(str(Path(__file__).parent.parent / "config/input_tokenizer.json"))
 output_tokenizer: Tokenizer = Tokenizer.from_file(str(Path(__file__).parent.parent / "config/output_tokenizer.json"))
+output_tokenizer.decoder = decoders.Metaspace()
 
 model = SpellCorrectorNet(
     encoder_config=LayerConfig(vocab_size=input_tokenizer.get_vocab_size(), d_model=128, n_layer=8, n_head=4),
@@ -115,7 +117,7 @@ def main():
         dataset_file = (data_dir / f).as_posix()
         my_dataset = SentenceDataset(dataset_file, input_tokenizer, output_tokenizer, broken_sentence_variation_count=20)
         print(f"Length of dataset: {len(my_dataset)}")
-        train(model=model, device=device, dataset=my_dataset, epoch=20, batch_size=64)
+        train(model=model, device=device, dataset=my_dataset, epoch=20, batch_size=240)
 
 main()
 
