@@ -14,39 +14,12 @@ from typing import TypedDict
 from torch import Tensor, tensor
 import torch
 from tokenizers import Tokenizer
-import math
 
 class LayerConfig(TypedDict):
     vocab_size: int
     d_model: int
     n_layer: int
     n_head: int
-
-
-class PositionalEncoding(Module):
-    def __init__(self, d_model: int, max_len: int = 5000):
-        super().__init__()
-        # Create a [max_len, d_model] matrix
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len).unsqueeze(1)  # Shape: [max_len, 1]
-        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
-
-        # Apply sine to even indices, cosine to odd indices
-        pe[:, 0::2] = torch.sin(position * div_term)  # even
-        pe[:, 1::2] = torch.cos(position * div_term)  # odd
-
-        pe = pe.unsqueeze(0)  # Shape: [1, max_len, d_model]
-        self.register_buffer('pe', pe)  # Not a parameter, but persistent
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: Tensor of shape [batch_size, seq_len, d_model]
-        Returns:
-            Tensor of same shape with positional encoding added
-        """
-        seq_len = x.size(1)
-        return x + self.pe[:, :seq_len]
 
 class LinearTransformer(Module):
     def __init__(self, encoder_d_model: int, decoder_d_model: int):
@@ -79,28 +52,28 @@ class TokenClassification(Module):
         x = self.layer2(x)
         return x
 
-
 class SpellCorrectorNet(Module):
     def __init__(self, encoder_config: LayerConfig, decoder_config: LayerConfig):
         """
         the max_sentence_length parameter is used to pre-generate causal mask, key padding mask to avoid memory allocation overhead to improve training and inference performance but may takes a little space in model file.
         """
         super().__init__()
-        self.encoder_config = encoder_config
-        self.decoder_config = decoder_config
+
         #common for encoder and decoder.
-        self.encoder_position_encoder = PositionalEncoding(d_model=encoder_config["d_model"], max_len=4096)
+        self.encoder_position_encoder = positional_encoding.PositionalEncoding(d_model=encoder_config["d_model"])
+        self.decoder_position_encoder = positional_encoding.PositionalEncoding(d_model=decoder_config["d_model"])
         #Encoders part.
-        self.encoder_embedding = Embedding(num_embeddings=encoder_config["vocab_size"], embedding_dim=encoder_config["d_model"], padding_idx=0)
-        self.encoder_layer = TransformerEncoderLayer(d_model=encoder_config["d_model"], nhead=encoder_config["n_head"], dropout=0.2, activation="gelu", batch_first=True)
-        self.encoder = TransformerEncoder(self.encoder_layer, num_layers=encoder_config["n_layer"])
+        self.shared_embedding = Embedding(num_embeddings=encoder_config["vocab_size"], embedding_dim=encoder_config["d_model"], padding_idx=0)
+        self.encoder_layer = TransformerEncoderLayer(d_model=encoder_config["d_model"], nhead=encoder_config["n_head"], dropout=0.1, activation="gelu", batch_first=True)
+        self.encoder_normalizer = LayerNorm(encoder_config["d_model"])
+        self.encoder = TransformerEncoder(self.encoder_layer, num_layers=encoder_config["n_layer"], norm=self.encoder_normalizer)
         #MLP layers for encoder-decoder memory d_model linear transform.
         self.encoder_decoder_linear_transformer = LinearTransformer(encoder_d_model=encoder_config["d_model"], decoder_d_model=decoder_config["d_model"])
         #decoder part.
-        self.decoder_position_encoder = PositionalEncoding(d_model=decoder_config["d_model"], max_len=4096)
-        self.decoder_embedding = Embedding(num_embeddings=decoder_config["vocab_size"], embedding_dim=decoder_config["d_model"], padding_idx=0)
-        self.decoder_layer = TransformerDecoderLayer(d_model=decoder_config["d_model"], nhead=decoder_config["n_head"], dropout=0.2, activation="gelu", batch_first=True)
-        self.decoder = TransformerDecoder(self.decoder_layer, num_layers=decoder_config["n_layer"])
+        # self.decoder_embedding = Embedding(num_embeddings=decoder_config["vocab_size"], embedding_dim=decoder_config["d_model"], padding_idx=0)
+        self.decoder_layer = TransformerDecoderLayer(d_model=decoder_config["d_model"], nhead=decoder_config["n_head"], dropout=0.1, activation="gelu", batch_first=True)
+        self.decoder_normalizer = LayerNorm(decoder_config["d_model"])
+        self.decoder = TransformerDecoder(self.decoder_layer, num_layers=decoder_config["n_layer"], norm=self.decoder_normalizer)
         self.decoder_layer_normalizer = LayerNorm(decoder_config["d_model"])
         #vocabulary classification part.
         self.decoder_token_classification = TokenClassification(decoder_d_model=decoder_config["d_model"], vocab_size=decoder_config["vocab_size"])
@@ -112,7 +85,7 @@ class SpellCorrectorNet(Module):
         """
         encoder_key_padding_mask = (x == 0)  #assume 0 meaning becomes <PAD> token, Boolean mask where True=masked
         #shape of x gonna be [batch_size, sequence_length]
-        x = self.encoder_embedding(x) * math.sqrt(self.encoder_config["d_model"])
+        x = self.shared_embedding(x)
         #shape of x gonna be [batch_size, sequence_length, encoder_d_model]
         x = self.encoder_position_encoder(x)
         # No need for encoder_mask as each token should attend to all other tokens
@@ -126,18 +99,19 @@ class SpellCorrectorNet(Module):
     def forward(self, x: Tensor, memory: Tensor, memory_key_padding_mask: Tensor) -> Tensor:
         target_key_padding_mask = (x == 0)  # Boolean mask where True=masked positions
         #shape of x gonna be [batch_size, sequence_length]
-        x = self.decoder_embedding(x) * math.sqrt(self.decoder_config["d_model"])
+        # x = self.decoder_embedding(x) #just using the same embedding for encoder and decoder. for debugging purpose only.
+        x = self.shared_embedding(x)
         #shape of x gonna be [batch_size, sequence_length, decoder_d_model]
         x = self.decoder_position_encoder(x)
         
         # Create proper causal mask for decoder self-attention (float tensor with -inf)
         seq_len = x.shape[1]
-        target_causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1) == 1.0
+        target_causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device) * float('-inf'), diagonal=1)
         
         # No need for memory causal mask - each target position should attend to all memory positions
         x = self.decoder(
-            tgt=x,
-            memory=memory,
+            tgt=x, 
+            memory=memory, 
             tgt_mask=target_causal_mask,
             tgt_key_padding_mask=target_key_padding_mask,
             memory_key_padding_mask=memory_key_padding_mask
@@ -156,16 +130,15 @@ class SpellCorrectorNet(Module):
         if max_length == None:
             max_length = len(text) * 2
         token_ids: list[int] = input_tokenizer.encode(f"<SOS>{text}<EOS>").ids
-        x = torch.tensor(token_ids, dtype=torch.long, device=device).reshape(1, -1)
+        x = torch.tensor(token_ids, dtype=torch.int32, device=device).reshape(1, -1)
         with torch.no_grad():
             with torch.autocast(device, dtype=torch.float16):
                 memory, memory_key_padding_mask = self.generate_memory(x)
-        sos_token = output_tokenizer.encode("<SOS>").ids[0]
-        eos_token = output_tokenizer.encode("<EOS>").ids[0]
+        sos_token, eos_token = input_tokenizer.encode("<SOS><EOS>").ids
         eos_token: int
         sos_token: int
 
-        buffer = torch.zeros(1, max_length, dtype=torch.long, device=device)
+        buffer = torch.zeros(1, max_length, dtype=torch.int32, device=device)
         position = 0
         buffer[-1][position] = sos_token
         position += 1
@@ -175,14 +148,14 @@ class SpellCorrectorNet(Module):
                     y: Tensor = self(buffer[:, :position], memory, memory_key_padding_mask)
             # torch.topk(y[-1, -1], 5).
             next_token: int = torch.argmax(y[-1, -1]).item()
-            buffer[-1, position] = next_token
-            position += 1
             if next_token == eos_token:
                 # print("hit of <EOS>")
                 break
             if position == max_length:
                 break
+            buffer[-1, position] = next_token
+            position += 1
         output_token_ids = buffer[-1, :position].tolist()
-        text: str = output_tokenizer.decode(output_token_ids, skip_special_tokens=False)
+        text: str = output_tokenizer.decode(output_token_ids)
         return text
 

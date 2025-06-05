@@ -1,10 +1,10 @@
-# Spell correction transformer based neural network model for Uyghur language.
+# transformer based Spell correction model for Uyghur language.
 
 # What?
-spell checking and correction is the one most NLP tasks we needed in our projects. from simple keyboard app to text dataset pre-processing, auto speech recognition, web/database search, language modeling, text normalization and more.
+spell checking and correction is the one most NLP tasks we needed in our projects. from simple keyboard app to text dataset pre-processing, auto speech recognition, web/database search, OCR, language modeling, text normalization it is useful in many domains.
 there may be some hard-coded alghorithm based spell checking and correction library but they often works by comparing word character similarity. they may leak contextual underdtanding on natural language. on the other hand, this model may perform better spell correction task because the spell correction is performed by sentence level with language context understanding.
 
-this is an open source spell correction language model based on transformer based neural network so you can benefit context understanding functionality to improve performance. we believe we are the first developer releases such language model until today.
+this is an open source spell correction language model based on transformer. you can benefit from context understanding functionality to improve correction performance.
 
 we train this model with text corpus scraped from the internet and provide pre-trained model. you can fine-tune this model on your specific tasks by follow our train/fine-tune documentation.
 
