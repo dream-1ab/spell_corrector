@@ -14,3 +14,4 @@ lets make some changes to our codebase to make it work.
 - `[NO EFFECT]` ask cursor to implement generate_memory, forward, generate_text function.
 - `[NO TESTED]` Swap models to test model and training loop.
 - `[NO EFFECT]` add math.sqrt(d_model) after embedding in forward method on model.
+- `[ EFFECTED]` model learns maybe by fixing by misusing input and output tokenizer. I don't want further experiments.
