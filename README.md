@@ -47,3 +47,8 @@ we used the standard Encoder/Decoder transformer architecture from pytorch machi
 
 1. install `uv` python package manager by running `pip install uv`
 2. install project dependencies by using uv command: `uv sync`
+
+
+# Screenshots
+![alt text](./screenshots/Screenshot%20from%202025-06-02%2022-54-48.png)
+![alt text](./screenshots/Screenshot%20from%202025-06-06%2009-14-06.png)
